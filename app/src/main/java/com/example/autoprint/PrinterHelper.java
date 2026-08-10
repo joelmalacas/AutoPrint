@@ -1,7 +1,6 @@
 package com.example.autoprint;
 
 import android.graphics.Bitmap;
-import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -11,26 +10,34 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
+/**
+ * Envia uma fotografia para impressão usando IPP (Internet Printing Protocol),
+ * o protocolo standard usado por impressoras de rede modernas (incluindo todas
+ * as compatíveis com AirPrint/HP ePrint), normalmente disponível na porta 631.
+ *
+ * Ao contrário do ESC/POS (que só serve para impressoras térmicas de talões),
+ * o IPP é o que uma impressora HP/Canon/Epson multifunções normal entende.
+ */
 public class PrinterHelper {
 
-    private static final String TAG = "AutoPrintDebug";
-
+    // Caminhos comuns usados por diferentes impressoras/servidores IPP.
+    // Tenta cada um até um responder com sucesso.
     private static final String[] CANDIDATE_PATHS = {
-            "/ipp/print",
             "/ipp/printer",
-            "/ipp"
-    };
-
-    // Formatos confirmados pelo ipptool na HP M139-M142
-    private static final String[] VALID_FORMATS = {
-            "application/PCLm",
-            "image/pwg-raster",
-            "application/octet-stream"
+            "/ipp/print",
+            "/ipp/print/",
+            "/ipp",
+            "/printer",
+            "/"
     };
 
     private static final int CONNECT_TIMEOUT_MS = 5000;
     private static final int READ_TIMEOUT_MS = 15000;
+
+    // Qualidade JPEG usada ao comprimir a foto antes de enviar (0-100)
     private static final int JPEG_QUALITY = 90;
+
+    // Reduz a foto a uma largura razoável antes de imprimir, para o envio ser rápido
     private static final int MAX_WIDTH_PX = 1600;
 
     public interface PrintCallback {
@@ -38,44 +45,48 @@ public class PrinterHelper {
         void onError(String message);
     }
 
+    // A impressora reportou "JPEG Unsupported" — por isso tentamos primeiro um PDF simples
+    // que contém a foto embutida, já que quase todas as impressoras de rede aceitam PDF.
+    private static final String[] CANDIDATE_FORMATS = {
+            "application/pdf", "application/octet-stream", "image/jpeg"
+    };
+
+    // DPI assumido para calcular o tamanho físico da página a partir dos pixeis da foto
+    private static final float PDF_DPI = 300f;
+
     public static void printImage(String ip, int port, Bitmap bitmap, PrintCallback callback) {
-        new Thread(() -> {
-            try {
-                Bitmap scaled = scaleDown(bitmap);
-                byte[] jpegBytes = bitmapToJpeg(scaled);
+        Bitmap scaled = scaleDown(bitmap);
+        byte[] jpegBytes = bitmapToJpeg(scaled);
+        byte[] pdfBytes = buildJpegPdf(jpegBytes, scaled.getWidth(), scaled.getHeight());
 
-                StringBuilder attemptsLog = new StringBuilder();
+        StringBuilder attemptsLog = new StringBuilder();
 
-                // Tenta os formatos reais reportados pela impressora
-                for (String format : VALID_FORMATS) {
-                    for (String path : CANDIDATE_PATHS) {
-                        try {
-                            Log.d(TAG, "Enviando para " + path + " no formato " + format);
-                            String result = sendIppPrintJob(ip, port, path, format, jpegBytes);
+        for (String format : CANDIDATE_FORMATS) {
+            byte[] payload = format.equals("application/pdf") ? pdfBytes : jpegBytes;
 
-                            if (result == null) {
-                                Log.d(TAG, "Sucesso no envio via IPP (" + path + " - " + format + ")!");
-                                if (callback != null) callback.onSuccess();
-                                return;
-                            }
-                            attemptsLog.append("IPP ").append(path).append(" [").append(format).append("] -> ").append(result).append("\n");
-                        } catch (IOException e) {
-                            attemptsLog.append("IPP ").append(path).append(" [").append(format).append("] -> ")
-                                    .append(e.getClass().getSimpleName()).append(": ").append(e.getMessage()).append("\n");
-                        }
+            for (String path : CANDIDATE_PATHS) {
+                try {
+                    String result = sendIppPrintJob(ip, port, path, format, payload);
+                    if (result == null) {
+                        if (callback != null) callback.onSuccess();
+                        return;
                     }
+                    attemptsLog.append(path).append(" [").append(format).append("] -> ")
+                            .append(result).append("\n");
+                } catch (IOException e) {
+                    attemptsLog.append(path).append(" [").append(format).append("] -> ")
+                            .append(e.getClass().getSimpleName())
+                            .append(": ").append(e.getMessage()).append("\n");
                 }
-
-                if (callback != null) {
-                    callback.onError("Falha no envio IPP:\n" + attemptsLog);
-                }
-
-            } catch (Exception e) {
-                Log.e(TAG, "Erro interno", e);
-                if (callback != null) callback.onError("Erro interno: " + e.getMessage());
             }
-        }).start();
+        }
+
+        if (callback != null) {
+            callback.onError("Nenhuma combinação respondeu com sucesso:\n" + attemptsLog);
+        }
     }
+
+    // ================= PREPARAÇÃO DA IMAGEM =================
 
     private static Bitmap scaleDown(Bitmap original) {
         if (original.getWidth() <= MAX_WIDTH_PX) return original;
@@ -90,6 +101,68 @@ public class PrinterHelper {
         return baos.toByteArray();
     }
 
+    // Constrói um PDF de uma página válido, com o JPEG embutido diretamente (sem reconverter
+    // a imagem — o PDF só "aponta" para os bytes do JPEG através do filtro DCTDecode).
+    private static byte[] buildJpegPdf(byte[] jpegBytes, int widthPx, int heightPx) {
+        ByteArrayOutputStream pdf = new ByteArrayOutputStream();
+        java.util.List<Integer> offsets = new java.util.ArrayList<>();
+
+        float pageWidthPt = widthPx * 72f / PDF_DPI;
+        float pageHeightPt = heightPx * 72f / PDF_DPI;
+
+        writeAsciiPdf(pdf, "%PDF-1.4\n");
+
+        // Objeto 1: catálogo
+        offsets.add(pdf.size());
+        writeAsciiPdf(pdf, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+        // Objeto 2: páginas
+        offsets.add(pdf.size());
+        writeAsciiPdf(pdf, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+
+        // Objeto 3: página, do tamanho exato da foto
+        offsets.add(pdf.size());
+        writeAsciiPdf(pdf, "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "
+                + pageWidthPt + " " + pageHeightPt
+                + "] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n");
+
+        // Objeto 4: a imagem em si (o JPEG original, sem alterações)
+        offsets.add(pdf.size());
+        writeAsciiPdf(pdf, "4 0 obj\n<< /Type /XObject /Subtype /Image /Width " + widthPx
+                + " /Height " + heightPx
+                + " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "
+                + jpegBytes.length + " >>\nstream\n");
+        pdf.write(jpegBytes, 0, jpegBytes.length);
+        writeAsciiPdf(pdf, "\nendstream\nendobj\n");
+
+        // Objeto 5: conteúdo da página — desenha a imagem a ocupar a página toda
+        offsets.add(pdf.size());
+        String content = "q\n" + pageWidthPt + " 0 0 " + pageHeightPt + " 0 0 cm\n/Im0 Do\nQ";
+        byte[] contentBytes = content.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        writeAsciiPdf(pdf, "5 0 obj\n<< /Length " + contentBytes.length + " >>\nstream\n");
+        pdf.write(contentBytes, 0, contentBytes.length);
+        writeAsciiPdf(pdf, "\nendstream\nendobj\n");
+
+        // Tabela de referências cruzadas (obrigatória para o PDF ser válido)
+        int xrefOffset = pdf.size();
+        writeAsciiPdf(pdf, "xref\n0 6\n0000000000 65535 f \n");
+        for (int off : offsets) {
+            writeAsciiPdf(pdf, String.format(Locale.US, "%010d 00000 n \n", off));
+        }
+
+        writeAsciiPdf(pdf, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xrefOffset + "\n%%EOF");
+
+        return pdf.toByteArray();
+    }
+
+    private static void writeAsciiPdf(ByteArrayOutputStream buffer, String text) {
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        buffer.write(bytes, 0, bytes.length);
+    }
+
+    // ================= PEDIDO IPP =================
+
+    // Devolve null se o pedido foi bem-sucedido, ou uma descrição do problema caso contrário
     private static String sendIppPrintJob(String ip, int port, String path, String documentFormat, byte[] documentBytes) throws IOException {
         byte[] ippHeader = buildIppPrintJobHeader(ip, port, path, documentFormat);
 
@@ -114,18 +187,30 @@ public class PrinterHelper {
 
             int httpStatus = conn.getResponseCode();
             if (httpStatus != HttpURLConnection.HTTP_OK) {
-                return "HTTP " + httpStatus;
+                // Lê o corpo do erro, se existir, para dar mais pista sobre a causa
+                String errorBody = "";
+                try {
+                    byte[] errBytes = readAll(conn.getErrorStream());
+                    errorBody = new String(errBytes, StandardCharsets.UTF_8).trim();
+                } catch (Exception ignored) { }
+                return "HTTP " + httpStatus
+                        + (errorBody.isEmpty() ? "" : " (" + truncate(errorBody, 120) + ")");
             }
 
             byte[] response = readAll(conn.getInputStream());
             int ippStatus = ippStatusCode(response);
             if (ippStatus <= 0x00FF) {
-                return null; // Sucesso IPP (0x0000 - successful-ok)
+                return null; // sucesso
             }
-            return "HTTP 200 mas IPP Status: 0x" + Integer.toHexString(ippStatus);
+            return "HTTP 200 mas estado IPP 0x" + Integer.toHexString(ippStatus)
+                    + " (pedido rejeitado pela impressora)";
         } finally {
             conn.disconnect();
         }
+    }
+
+    private static String truncate(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max) + "...";
     }
 
     private static int ippStatusCode(byte[] response) {
@@ -143,34 +228,64 @@ public class PrinterHelper {
         return buffer.toByteArray();
     }
 
+    // ================= CONSTRUÇÃO DO CABEÇALHO IPP (Print-Job) =================
+
+    // ================= CONSTRUÇÃO DO CABEÇALHO IPP (Print-Job) =================
+
     private static byte[] buildIppPrintJobHeader(String ip, int port, String path, String documentFormat) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
-        buffer.write(0x02); // Versão IPP 2.0
-        buffer.write(0x00);
+        // 1. Versão IPP 1.1
+        buffer.write(0x01);
+        buffer.write(0x01);
 
-        buffer.write(0x00); // Operation: Print-Job
+        // 2. operation-id: Print-Job (0x0002)
+        buffer.write(0x00);
         buffer.write(0x02);
 
-        buffer.write(0x00); // Request ID
+        // 3. request-id: 1 (4 bytes)
+        buffer.write(0x00);
         buffer.write(0x00);
         buffer.write(0x00);
         buffer.write(0x01);
 
+        // 4. Início do grupo de atributos da operação
         buffer.write(0x01); // operation-attributes-tag
 
-        writeAttribute(buffer, 0x47, "attributes-charset", "utf-8");
-        writeAttribute(buffer, 0x48, "attributes-natural-language", "en-us");
-        writeAttribute(buffer, 0x45, "printer-uri", "ipp://" + ip + ":" + port + path);
-        writeAttribute(buffer, 0x42, "requesting-user-name", "AutoPrint");
-        writeAttribute(buffer, 0x41, "job-name", "Foto AutoPrint");
-        writeAttribute(buffer, 0x49, "document-format", documentFormat);
+        // 5. Atributos Obrigatórios (Strict IPP Specification Order)
+        // charset e natural-language TÊM DE SER os dois primeiros
+        writeAttribute(buffer, 0x47, "attributes-charset", "utf-8");                  // charset (0x47)
+        writeAttribute(buffer, 0x48, "attributes-natural-language", "en-us");         // naturalLanguage (0x48)
 
+        // printer-uri precisa do esquema http:// ou ipp:// exato
+        String uri = "ipp://" + ip + ":" + port + path;
+        writeAttribute(buffer, 0x45, "printer-uri", uri);                             // uri (0x45)
+
+        writeAttribute(buffer, 0x42, "requesting-user-name", "AutoPrint");            // nameWithoutLanguage (0x42)
+        writeAttribute(buffer, 0x42, "job-name", "AutoPrint Photo");                  // nameWithoutLanguage (0x42)
+
+        // ipp-attribute-fidelity é OBRIGATÓRIO para a HP não dar 0x0400 (boolean tag 0x22)
+        writeBooleanAttribute(buffer, "ipp-attribute-fidelity", false);
+
+        writeAttribute(buffer, 0x49, "document-format", documentFormat);              // mimeMediaType (0x49)
+
+        // 6. Fim do grupo de atributos
         buffer.write(0x03); // end-of-attributes-tag
 
         return buffer.toByteArray();
     }
 
+    // Escreve um atributo booleano no formato IPP (Tag 0x22)
+    private static void writeBooleanAttribute(ByteArrayOutputStream buffer, String name, boolean value) throws IOException {
+        byte[] nameBytes = name.getBytes(StandardCharsets.US_ASCII);
+        buffer.write(0x22); // boolean tag
+        writeShort(buffer, nameBytes.length);
+        buffer.write(nameBytes);
+        writeShort(buffer, 1); // valor do booleano tem sempre tamanho 1
+        buffer.write(value ? 0x01 : 0x00);
+    }
+
+    // Escreve um atributo IPP no formato: tag(1) + tamanho-nome(2) + nome + tamanho-valor(2) + valor
     private static void writeAttribute(ByteArrayOutputStream buffer, int tag, String name, String value) throws IOException {
         byte[] nameBytes = name.getBytes(StandardCharsets.US_ASCII);
         byte[] valueBytes = value.getBytes(StandardCharsets.UTF_8);

@@ -142,7 +142,7 @@ public class DefActivity extends AppCompatActivity {
             return;
         }
 
-        txtConnectionStatus.setText("A testar ligação à HP LaserJet...");
+        txtConnectionStatus.setText("A testar ligação à impressora...");
         txtConnectionStatus.setTextColor(0xFF8A8A8E);
 
         final int finalPort = port;
@@ -154,7 +154,7 @@ public class DefActivity extends AppCompatActivity {
                 socket.connect(new InetSocketAddress(ip, finalPort), 5000);
                 reachable = true;
             } catch (java.net.SocketTimeoutException e) {
-                errorDetail = "Tempo esgotado — confirma se o telemóvel e a HP M140w estão no mesmo Wi-Fi";
+                errorDetail = "Tempo esgotado — confirma se o telemóvel e a Impressora/Surface estão no mesmo Wi-Fi";
             } catch (java.net.ConnectException e) {
                 errorDetail = "Ligação recusada na porta " + finalPort + " (tenta a porta 631 ou 9100)";
             } catch (java.net.UnknownHostException e) {
