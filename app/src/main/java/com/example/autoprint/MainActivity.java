@@ -1,12 +1,17 @@
 package com.example.autoprint;
 
 import android.Manifest;
+import android.content.ContentUris;
 import android.content.ContentValues;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.text.TextUtils;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
@@ -29,7 +34,10 @@ import androidx.core.content.ContextCompat;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import java.io.IOException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 
@@ -49,6 +57,10 @@ public class MainActivity extends AppCompatActivity {
 
     private int lensFacing = CameraSelector.LENS_FACING_BACK;
     private int flashMode = ImageCapture.FLASH_MODE_OFF;
+
+    // Número máximo de fotografias a manter guardadas; ao ultrapassar, apaga-se a mais antiga
+    private static final int MAX_PHOTOS = 10;
+    private static final String PHOTOS_RELATIVE_PATH = "Pictures/AutoPrint/";
 
     // Pede a permissão da câmara em tempo de execução
     private final ActivityResultLauncher<String> requestPermissionLauncher =
@@ -84,6 +96,10 @@ public class MainActivity extends AppCompatActivity {
         btnCapture.setOnClickListener(v -> takePhoto());
         btnFlash.setOnClickListener(v -> toggleFlash());
         btnSwitchCamera.setOnClickListener(v -> switchCamera());
+
+        ImageButton btnSettings = findViewById(R.id.btnSettings);
+        btnSettings.setOnClickListener(v ->
+                startActivity(new android.content.Intent(MainActivity.this, DefActivity.class)));
     }
 
     private boolean hasCameraPermission() {
@@ -166,6 +182,14 @@ public class MainActivity extends AppCompatActivity {
                         }
                         Toast.makeText(MainActivity.this,
                                 "Fotografia guardada", Toast.LENGTH_SHORT).show();
+
+                        // Depois de guardar, garante que não ficam mais de MAX_PHOTOS fotos guardadas
+                        enforcePhotoLimit();
+
+                        // Envia a foto para impressão automaticamente
+                        if (savedUri != null) {
+                            printPhoto(savedUri);
+                        }
                     }
 
                     @Override
@@ -176,6 +200,97 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
         );
+    }
+
+    // ================= IMPRESSÃO AUTOMÁTICA =================
+
+    // Lê o IP/portas guardados nas Definições e envia a foto para impressão.
+    // Corre em segundo plano porque carrega a imagem e abre uma ligação de rede.
+    private void printPhoto(Uri photoUri) {
+        SharedPreferences prefs = getSharedPreferences(DefActivity.PREFS_NAME, MODE_PRIVATE);
+        String ip = prefs.getString(DefActivity.KEY_PRINTER_IP, "");
+        int port = prefs.getInt(DefActivity.KEY_PRINTER_PORT, 9100);
+
+        if (TextUtils.isEmpty(ip)) {
+            txtStatus.setText("Impressora não configurada");
+            return;
+        }
+
+        txtStatus.setText("A imprimir...");
+
+        new Thread(() -> {
+            Bitmap bitmap;
+            try {
+                bitmap = MediaStore.Images.Media.getBitmap(getContentResolver(), photoUri);
+            } catch (IOException e) {
+                runOnUiThread(() -> txtStatus.setText("Erro ao carregar a foto para impressão"));
+                return;
+            }
+
+            PrinterHelper.printImage(ip, port, bitmap, new PrinterHelper.PrintCallback() {
+                @Override
+                public void onSuccess() {
+                    runOnUiThread(() -> {
+                        txtStatus.setText("Impressão enviada");
+                        Toast.makeText(MainActivity.this, "Foto enviada para a impressora", Toast.LENGTH_SHORT).show();
+                    });
+                }
+
+                @Override
+                public void onError(String message) {
+                    runOnUiThread(() -> {
+                        txtStatus.setText("Falha ao imprimir");
+                        Toast.makeText(MainActivity.this, "Erro ao imprimir: " + message, Toast.LENGTH_LONG).show();
+                    });
+                }
+            });
+        }).start();
+    }
+
+    // ================= LIMITE DE FOTOGRAFIAS GUARDADAS =================
+
+    // Verifica quantas fotos existem na pasta Pictures/AutoPrint e apaga as mais
+    // antigas até sobrarem no máximo MAX_PHOTOS. Corre numa thread própria porque
+    // acede ao MediaStore (consulta + eliminação), o que não pode ser feito na thread principal.
+    private void enforcePhotoLimit() {
+        new Thread(() -> {
+            Uri collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+
+            String[] projection = { MediaStore.Images.Media._ID };
+            String selection = MediaStore.Images.Media.RELATIVE_PATH + "=?";
+            String[] selectionArgs = { PHOTOS_RELATIVE_PATH };
+            // Ordenado da mais antiga para a mais recente, para sabermos quais apagar primeiro
+            String sortOrder = MediaStore.Images.Media.DATE_ADDED + " ASC";
+
+            List<Uri> allPhotos = new ArrayList<>();
+
+            try (Cursor cursor = getContentResolver().query(
+                    collection, projection, selection, selectionArgs, sortOrder)) {
+
+                if (cursor != null) {
+                    int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
+                    while (cursor.moveToNext()) {
+                        long id = cursor.getLong(idColumn);
+                        allPhotos.add(ContentUris.withAppendedId(collection, id));
+                    }
+                }
+            } catch (Exception e) {
+                return; // Se a consulta falhar, não arrisca apagar nada
+            }
+
+            int excess = allPhotos.size() - MAX_PHOTOS;
+            if (excess <= 0) return; // Ainda não chegou ao limite
+
+            // Apaga as fotos mais antigas (as primeiras da lista, por estarem ordenadas por data ASC)
+            for (int i = 0; i < excess; i++) {
+                try {
+                    getContentResolver().delete(allPhotos.get(i), null, null);
+                } catch (SecurityException se) {
+                    // Em alguns casos o sistema pode pedir confirmação extra para apagar;
+                    // como a app é dona das fotos que ela própria criou, isto normalmente não acontece.
+                }
+            }
+        }).start();
     }
 
     // Pequeno "flash" branco no ecrã ao tirar a foto, para dar feedback visual
