@@ -74,9 +74,8 @@ public class DefActivity extends AppCompatActivity {
     }
 
     // ================= CARREGAR / GUARDAR =================
-
     private void loadSettings() {
-        editIp.setText(prefs.getString(KEY_PRINTER_IP, "192.168.1.107"));
+        editIp.setText(prefs.getString(KEY_PRINTER_IP, "192.168.1.109"));
 
         // CORREÇÃO: Padrão alterado para 631 (IPP)
         int savedPort = prefs.getInt(KEY_PRINTER_PORT, 631);
