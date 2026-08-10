@@ -1,155 +1,189 @@
 package com.example.autoprint;
 
 import android.graphics.Bitmap;
-import android.graphics.Color;
+import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.InetSocketAddress;
-import java.net.Socket;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
-/**
- * Ajuda a enviar uma fotografia para uma impressora térmica de rede (protocolo ESC/POS,
- * normalmente na porta 9100 - "RAW"/JetDirect). Funciona com a maioria das impressoras
- * térmicas de talões/etiquetas que suportam o comando de imagem raster GS v 0.
- */
 public class PrinterHelper {
 
-    // Largura de impressão em pontos. 384 pontos ~= impressoras térmicas de 58mm (203dpi).
-    // Se a tua impressora for de 80mm, experimenta 576.
-    private static final int PRINTER_WIDTH_DOTS = 384;
+    private static final String TAG = "AutoPrintDebug";
 
-    private static final int SOCKET_TIMEOUT_MS = 5000;
+    private static final String[] CANDIDATE_PATHS = {
+            "/ipp/print",
+            "/ipp/printer",
+            "/ipp"
+    };
+
+    // Formatos confirmados pelo ipptool na HP M139-M142
+    private static final String[] VALID_FORMATS = {
+            "application/PCLm",
+            "image/pwg-raster",
+            "application/octet-stream"
+    };
+
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int READ_TIMEOUT_MS = 15000;
+    private static final int JPEG_QUALITY = 90;
+    private static final int MAX_WIDTH_PX = 1600;
 
     public interface PrintCallback {
         void onSuccess();
         void onError(String message);
     }
 
-    /**
-     * Envia o bitmap para impressão. Deve ser chamado numa thread que NÃO seja a principal,
-     * porque abre uma ligação de rede.
-     */
     public static void printImage(String ip, int port, Bitmap bitmap, PrintCallback callback) {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(ip, port), SOCKET_TIMEOUT_MS);
-            socket.setSoTimeout(SOCKET_TIMEOUT_MS);
+        new Thread(() -> {
+            try {
+                Bitmap scaled = scaleDown(bitmap);
+                byte[] jpegBytes = bitmapToJpeg(scaled);
 
-            OutputStream out = socket.getOutputStream();
+                StringBuilder attemptsLog = new StringBuilder();
 
-            Bitmap scaled = scaleToPrinterWidth(bitmap);
-            boolean[][] blackPixels = ditherToBlackAndWhite(scaled);
+                // Tenta os formatos reais reportados pela impressora
+                for (String format : VALID_FORMATS) {
+                    for (String path : CANDIDATE_PATHS) {
+                        try {
+                            Log.d(TAG, "Enviando para " + path + " no formato " + format);
+                            String result = sendIppPrintJob(ip, port, path, format, jpegBytes);
 
-            byte[] payload = buildEscPosPayload(blackPixels, scaled.getWidth(), scaled.getHeight());
-
-            out.write(payload);
-            out.flush();
-
-            if (!scaled.isRecycled() && scaled != bitmap) {
-                scaled.recycle();
-            }
-
-            if (callback != null) callback.onSuccess();
-        } catch (IOException e) {
-            if (callback != null) callback.onError(e.getMessage());
-        }
-    }
-
-    // ================= PREPARAÇÃO DA IMAGEM =================
-
-    // Reduz a foto à largura que a impressora consegue imprimir, mantendo a proporção
-    private static Bitmap scaleToPrinterWidth(Bitmap original) {
-        if (original.getWidth() <= PRINTER_WIDTH_DOTS) {
-            return original;
-        }
-        float ratio = (float) PRINTER_WIDTH_DOTS / original.getWidth();
-        int targetHeight = Math.round(original.getHeight() * ratio);
-        return Bitmap.createScaledBitmap(original, PRINTER_WIDTH_DOTS, targetHeight, true);
-    }
-
-    // Converte a foto a cores/tons de cinzento para preto e branco puro, usando dithering
-    // (Floyd-Steinberg) para que a foto impressa mantenha detalhe em vez de ficar "queimada".
-    private static boolean[][] ditherToBlackAndWhite(Bitmap bitmap) {
-        int width = bitmap.getWidth();
-        int height = bitmap.getHeight();
-
-        float[][] gray = new float[height][width];
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int pixel = bitmap.getPixel(x, y);
-                float luminance = 0.299f * Color.red(pixel)
-                        + 0.587f * Color.green(pixel)
-                        + 0.114f * Color.blue(pixel);
-                gray[y][x] = luminance;
-            }
-        }
-
-        boolean[][] black = new boolean[height][width];
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                float oldPixel = gray[y][x];
-                float newPixel = oldPixel < 128 ? 0 : 255;
-                black[y][x] = newPixel == 0; // true = imprimir ponto preto
-
-                float error = oldPixel - newPixel;
-
-                if (x + 1 < width) gray[y][x + 1] += error * 7f / 16f;
-                if (y + 1 < height) {
-                    if (x - 1 >= 0) gray[y + 1][x - 1] += error * 3f / 16f;
-                    gray[y + 1][x] += error * 5f / 16f;
-                    if (x + 1 < width) gray[y + 1][x + 1] += error / 16f;
-                }
-            }
-        }
-
-        return black;
-    }
-
-    // ================= COMANDOS ESC/POS =================
-
-    private static byte[] buildEscPosPayload(boolean[][] blackPixels, int width, int height) {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-
-        // ESC @ -> inicializa/reinicia a impressora
-        buffer.write(0x1B);
-        buffer.write(0x40);
-
-        // GS v 0 -> comando de impressão de imagem raster
-        int widthBytes = (width + 7) / 8;
-
-        buffer.write(0x1D);
-        buffer.write(0x76);
-        buffer.write(0x30);
-        buffer.write(0x00); // m = 0 (modo normal)
-        buffer.write(widthBytes & 0xFF);
-        buffer.write((widthBytes >> 8) & 0xFF);
-        buffer.write(height & 0xFF);
-        buffer.write((height >> 8) & 0xFF);
-
-        for (int y = 0; y < height; y++) {
-            for (int byteIndex = 0; byteIndex < widthBytes; byteIndex++) {
-                int b = 0;
-                for (int bit = 0; bit < 8; bit++) {
-                    int x = byteIndex * 8 + bit;
-                    boolean isBlack = x < width && blackPixels[y][x];
-                    if (isBlack) {
-                        b |= (0x80 >> bit);
+                            if (result == null) {
+                                Log.d(TAG, "Sucesso no envio via IPP (" + path + " - " + format + ")!");
+                                if (callback != null) callback.onSuccess();
+                                return;
+                            }
+                            attemptsLog.append("IPP ").append(path).append(" [").append(format).append("] -> ").append(result).append("\n");
+                        } catch (IOException e) {
+                            attemptsLog.append("IPP ").append(path).append(" [").append(format).append("] -> ")
+                                    .append(e.getClass().getSimpleName()).append(": ").append(e.getMessage()).append("\n");
+                        }
                     }
                 }
-                buffer.write(b);
-            }
-        }
 
-        // Avança papel e corta (se a impressora tiver guilhotina automática)
-        buffer.write('\n');
-        buffer.write('\n');
-        buffer.write('\n');
-        buffer.write(0x1D);
-        buffer.write(0x56);
+                if (callback != null) {
+                    callback.onError("Falha no envio IPP:\n" + attemptsLog);
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "Erro interno", e);
+                if (callback != null) callback.onError("Erro interno: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    private static Bitmap scaleDown(Bitmap original) {
+        if (original.getWidth() <= MAX_WIDTH_PX) return original;
+        float ratio = (float) MAX_WIDTH_PX / original.getWidth();
+        int targetHeight = Math.round(original.getHeight() * ratio);
+        return Bitmap.createScaledBitmap(original, MAX_WIDTH_PX, targetHeight, true);
+    }
+
+    private static byte[] bitmapToJpeg(Bitmap bitmap) {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, baos);
+        return baos.toByteArray();
+    }
+
+    private static String sendIppPrintJob(String ip, int port, String path, String documentFormat, byte[] documentBytes) throws IOException {
+        byte[] ippHeader = buildIppPrintJobHeader(ip, port, path, documentFormat);
+
+        byte[] fullPayload = new byte[ippHeader.length + documentBytes.length];
+        System.arraycopy(ippHeader, 0, fullPayload, 0, ippHeader.length);
+        System.arraycopy(documentBytes, 0, fullPayload, ippHeader.length, documentBytes.length);
+
+        URL url = new URL("http://" + ip + ":" + port + path);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        try {
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(READ_TIMEOUT_MS);
+            conn.setRequestProperty("Content-Type", "application/ipp");
+            conn.setFixedLengthStreamingMode(fullPayload.length);
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(fullPayload);
+                os.flush();
+            }
+
+            int httpStatus = conn.getResponseCode();
+            if (httpStatus != HttpURLConnection.HTTP_OK) {
+                return "HTTP " + httpStatus;
+            }
+
+            byte[] response = readAll(conn.getInputStream());
+            int ippStatus = ippStatusCode(response);
+            if (ippStatus <= 0x00FF) {
+                return null; // Sucesso IPP (0x0000 - successful-ok)
+            }
+            return "HTTP 200 mas IPP Status: 0x" + Integer.toHexString(ippStatus);
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    private static int ippStatusCode(byte[] response) {
+        if (response.length < 4) return -1;
+        return ((response[2] & 0xFF) << 8) | (response[3] & 0xFF);
+    }
+
+    private static byte[] readAll(java.io.InputStream in) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        byte[] chunk = new byte[4096];
+        int read;
+        while ((read = in.read(chunk)) != -1) {
+            buffer.write(chunk, 0, read);
+        }
+        return buffer.toByteArray();
+    }
+
+    private static byte[] buildIppPrintJobHeader(String ip, int port, String path, String documentFormat) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+
+        buffer.write(0x02); // Versão IPP 2.0
         buffer.write(0x00);
 
+        buffer.write(0x00); // Operation: Print-Job
+        buffer.write(0x02);
+
+        buffer.write(0x00); // Request ID
+        buffer.write(0x00);
+        buffer.write(0x00);
+        buffer.write(0x01);
+
+        buffer.write(0x01); // operation-attributes-tag
+
+        writeAttribute(buffer, 0x47, "attributes-charset", "utf-8");
+        writeAttribute(buffer, 0x48, "attributes-natural-language", "en-us");
+        writeAttribute(buffer, 0x45, "printer-uri", "ipp://" + ip + ":" + port + path);
+        writeAttribute(buffer, 0x42, "requesting-user-name", "AutoPrint");
+        writeAttribute(buffer, 0x41, "job-name", "Foto AutoPrint");
+        writeAttribute(buffer, 0x49, "document-format", documentFormat);
+
+        buffer.write(0x03); // end-of-attributes-tag
+
         return buffer.toByteArray();
+    }
+
+    private static void writeAttribute(ByteArrayOutputStream buffer, int tag, String name, String value) throws IOException {
+        byte[] nameBytes = name.getBytes(StandardCharsets.US_ASCII);
+        byte[] valueBytes = value.getBytes(StandardCharsets.UTF_8);
+
+        buffer.write(tag);
+        writeShort(buffer, nameBytes.length);
+        buffer.write(nameBytes);
+        writeShort(buffer, valueBytes.length);
+        buffer.write(valueBytes);
+    }
+
+    private static void writeShort(ByteArrayOutputStream buffer, int value) {
+        buffer.write((value >> 8) & 0xFF);
+        buffer.write(value & 0xFF);
     }
 }
