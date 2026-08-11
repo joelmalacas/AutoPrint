@@ -9,57 +9,57 @@ import android.graphics.RectF;
 
 public class TemplateComposer {
 
-    /**
-     * Junta a foto tirada ao template
-     *
-     * @param context Contexto da aplicação.
-     * @param photoBitmap A foto tirada pela câmara.
-     * @param templateResId O ID do recurso do jornal (ex: R.drawable.template).
-     * @return Bitmap final pronto a enviar para o PrinterHelper.
-     */
+    // Resolução A4 Standard a 300 DPI
+    private static final int A4_WIDTH = 2480;
+    private static final int A4_HEIGHT = 3508;
+
     public static Bitmap processJournalTemplate(Context context, Bitmap photoBitmap, int templateResId) {
-        // 1. Carrega o template do jornal mantendo a qualidade original
+        Bitmap safePhoto = ensureSoftwareBitmap(photoBitmap);
+
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inScaled = false;
-        Bitmap templateBitmap = BitmapFactory.decodeResource(context.getResources(), templateResId, options);
+        Bitmap rawTemplate = BitmapFactory.decodeResource(context.getResources(), templateResId, options);
 
-        if (templateBitmap == null) {
-            return photoBitmap;
+        if (rawTemplate == null) {
+            return safePhoto;
         }
 
-        int tWidth = templateBitmap.getWidth();
-        int tHeight = templateBitmap.getHeight();
+        Bitmap safeTemplate = ensureSoftwareBitmap(rawTemplate);
 
-        // 2. Cria o bitmap final com as dimensões exatas do jornal
-        Bitmap resultBitmap = Bitmap.createBitmap(tWidth, tHeight, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(resultBitmap);
+        // 1. Cria a folha A4 em branco (2480 x 3508)
+        Bitmap a4PageBitmap = Bitmap.createBitmap(A4_WIDTH, A4_HEIGHT, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(a4PageBitmap);
 
-        // 3. Desenha o fundo do jornal
-        canvas.drawBitmap(templateBitmap, 0, 0, null);
+        // 2. Desenha o template forçado a preencher os 2480x3508 da folha A4
+        Rect srcTemplateRect = new Rect(0, 0, safeTemplate.getWidth(), safeTemplate.getHeight());
+        Rect dstTemplateRect = new Rect(0, 0, A4_WIDTH, A4_HEIGHT);
+        canvas.drawBitmap(safeTemplate, srcTemplateRect, dstTemplateRect, null);
 
-        // 4. Calcula a caixa da foto em pixeis exatos com base nas percentagens do layout
-        float targetX = tWidth * 0.038f;
-        float targetY = tHeight * 0.168f;
-        float targetWidth = tWidth * 0.582f;
-        float targetHeight = tHeight * 0.412f;
+        // 3. Coordenadas exatas para a foto dentro da moldura da folha A4
+        float targetX = A4_WIDTH * 0.041f;       // ~101 px da esquerda
+        float targetY = A4_HEIGHT * 0.170f;      // ~596 px do topo
+        float targetWidth = A4_WIDTH * 0.575f;   // ~1426 px de largura
+        float targetHeight = A4_HEIGHT * 0.402f;  // ~1410 px de altura
 
-        RectF dstRect = new RectF(targetX, targetY, targetX + targetWidth, targetY + targetHeight);
+        RectF dstPhotoRect = new RectF(targetX, targetY, targetX + targetWidth, targetY + targetHeight);
 
-        // 5. Ajusta a foto tirada (Center Crop) para preencher o retângulo sem esticar/deformar
-        Bitmap croppedPhoto = cropToAspectRatio(photoBitmap, targetWidth / targetHeight);
+        // 4. Recorta a foto tirada para o rácio exato da caixa
+        Bitmap croppedPhoto = cropToAspectRatio(safePhoto, targetWidth / targetHeight);
+        Rect srcPhotoRect = new Rect(0, 0, croppedPhoto.getWidth(), croppedPhoto.getHeight());
 
-        Rect srcRect = new Rect(0, 0, croppedPhoto.getWidth(), croppedPhoto.getHeight());
+        // 5. Desenha a foto no jornal
+        canvas.drawBitmap(croppedPhoto, srcPhotoRect, dstPhotoRect, null);
 
-        // 6. Desenha a foto recortada dentro da caixa reservada do jornal
-        canvas.drawBitmap(croppedPhoto, srcRect, dstRect, null);
-
-        return resultBitmap;
+        return a4PageBitmap;
     }
 
-    /**
-     * Corta o centro da imagem para corresponder à proporção exata do destino,
-     * evitando que as pessoas/elementos fiquem esticados.
-     */
+    private static Bitmap ensureSoftwareBitmap(Bitmap bitmap) {
+        if (bitmap != null && bitmap.getConfig() == Bitmap.Config.HARDWARE) {
+            return bitmap.copy(Bitmap.Config.ARGB_8888, false);
+        }
+        return bitmap;
+    }
+
     private static Bitmap cropToAspectRatio(Bitmap src, float targetRatio) {
         int srcWidth = src.getWidth();
         int srcHeight = src.getHeight();
@@ -69,10 +69,8 @@ public class TemplateComposer {
         int cropHeight = srcHeight;
 
         if (srcRatio > targetRatio) {
-            // A imagem original é mais larga -> corta as laterais
             cropWidth = Math.round(srcHeight * targetRatio);
         } else {
-            // A imagem original é mais alta -> corta o topo e fundo
             cropHeight = Math.round(srcWidth / targetRatio);
         }
 

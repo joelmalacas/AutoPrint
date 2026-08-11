@@ -199,7 +199,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ================= IMPRESSÃO AUTOMÁTICA =================
-
     private void printPhoto(Uri photoUri) {
         SharedPreferences prefs = getSharedPreferences(DefActivity.PREFS_NAME, MODE_PRIVATE);
         String ip = prefs.getString(DefActivity.KEY_PRINTER_IP, "");
@@ -210,7 +209,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        txtStatus.setText("A gerar jornal e imprimir...");
+        txtStatus.setText("A gerar template e imprimir...");
 
         new Thread(() -> {
             try {
@@ -225,7 +224,7 @@ public class MainActivity extends AppCompatActivity {
                 Bitmap journalBitmap = TemplateComposer.processJournalTemplate(
                         MainActivity.this,
                         rawPhotoBitmap,
-                        R.drawable.retro_paparazzi_template
+                        R.drawable.retro_paparazzi_template_resize
                 );
 
                 if (journalBitmap == null) {
@@ -249,10 +248,10 @@ public class MainActivity extends AppCompatActivity {
 
             } catch (Throwable e) {
                 // Captura tanto Exception como OutOfMemoryError sem crashar a app
-                Log.e("AutoPrintCrash", "Erro ao processar/imprimir jornal: ", e);
+                Log.e("AutoPrintCrash", "Erro ao processar/imprimir template: ", e);
                 runOnUiThread(() -> {
-                    txtStatus.setText("Erro no processamento do jornal");
-                    Toast.makeText(MainActivity.this, "Erro: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+                    txtStatus.setText("Erro no processamento do template");
+                    Log.e("AutoPrint", "Erro: " + e.getLocalizedMessage());
                 });
             }
         }).start();
@@ -264,7 +263,7 @@ public class MainActivity extends AppCompatActivity {
                 ImageDecoder.Source source = ImageDecoder.createSource(getContentResolver(), uri);
                 return ImageDecoder.decodeBitmap(source, (decoder, info, src) -> {
                     decoder.setTargetSampleSize(2); // Reduz consumo de RAM
-                    decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
+                    decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE); //Alloc BitMap
                 });
             } else {
                 try (InputStream inputStream = getContentResolver().openInputStream(uri)) {

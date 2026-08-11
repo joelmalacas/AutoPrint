@@ -1,7 +1,7 @@
 package com.example.autoprint;
 
 import android.graphics.Bitmap;
-
+import android.graphics.BitmapFactory;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -51,13 +51,15 @@ public class PrinterHelper {
             "application/pdf", "application/octet-stream", "image/jpeg"
     };
 
-    // DPI assumido para calcular o tamanho físico da página a partir dos pixeis da foto
-    private static final float PDF_DPI = 300f;
-
     public static void printImage(String ip, int port, Bitmap bitmap, PrintCallback callback) {
+        // 1. Reduz o bitmap para uma resolução adequada antes de comprimir (evita OutOfMemory)
         Bitmap scaled = scaleDown(bitmap);
+
+        // 2. Converte para JPEG comprimido
         byte[] jpegBytes = bitmapToJpeg(scaled);
-        byte[] pdfBytes = buildJpegPdf(jpegBytes, scaled.getWidth(), scaled.getHeight());
+
+        // 3. Gera o PDF A4 estático (595x842 pt) contendo o JPEG ajustado à folha
+        byte[] pdfBytes = buildA4PdfWithJpeg(jpegBytes);
 
         StringBuilder attemptsLog = new StringBuilder();
 
@@ -88,6 +90,70 @@ public class PrinterHelper {
 
     // ================= PREPARAÇÃO DA IMAGEM =================
 
+    /**
+     * Constrói um PDF A4 standard (595 x 842 pt) contendo o JPEG ajustado a 100% da página.
+     * Funciona em praticamente todas as impressoras de rede via IPP sem estourar memória.
+     */
+    private static byte[] buildA4PdfWithJpeg(byte[] jpegBytes) {
+        ByteArrayOutputStream pdf = new ByteArrayOutputStream();
+        java.util.List<Integer> offsets = new java.util.ArrayList<>();
+
+        // Dimensões ISO A4 estáticas em pontos PDF (72 pt/polegada)
+        float pageWidthPt = 595f;
+        float pageHeightPt = 842f;
+
+        // Descodifica apenas as dimensões da imagem (sem carregar na memória)
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length, options);
+        int widthPx = options.outWidth;
+        int heightPx = options.outHeight;
+
+        writeAsciiPdf(pdf, "%PDF-1.4\n");
+
+        // Objeto 1: Catálogo
+        offsets.add(pdf.size());
+        writeAsciiPdf(pdf, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+        // Objeto 2: Páginas
+        offsets.add(pdf.size());
+        writeAsciiPdf(pdf, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+
+        // Objeto 3: Definição da Página A4 Estática (595 x 842 pt)
+        offsets.add(pdf.size());
+        writeAsciiPdf(pdf, "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "
+                + pageWidthPt + " " + pageHeightPt
+                + "] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n");
+
+        // Objeto 4: Imagem JPEG embutida (stream leve)
+        offsets.add(pdf.size());
+        writeAsciiPdf(pdf, "4 0 obj\n<< /Type /XObject /Subtype /Image /Width " + widthPx
+                + " /Height " + heightPx
+                + " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "
+                + jpegBytes.length + " >>\nstream\n");
+        pdf.write(jpegBytes, 0, jpegBytes.length);
+        writeAsciiPdf(pdf, "\nendstream\nendobj\n");
+
+        // Objeto 5: Escala a imagem para preencher exatamente a folha A4 (595x842 pt)
+        offsets.add(pdf.size());
+        String content = "q\n" + pageWidthPt + " 0 0 " + pageHeightPt + " 0 0 cm\n/Im0 Do\nQ";
+        byte[] contentBytes = content.getBytes(StandardCharsets.US_ASCII);
+        writeAsciiPdf(pdf, "5 0 obj\n<< /Length " + contentBytes.length + " >>\nstream\n");
+        pdf.write(contentBytes, 0, contentBytes.length);
+        writeAsciiPdf(pdf, "\nendstream\nendobj\n");
+
+        // Tabela xref
+        int xrefOffset = pdf.size();
+        writeAsciiPdf(pdf, "xref\n0 6\n0000000000 65535 f \n");
+        for (int off : offsets) {
+            writeAsciiPdf(pdf, String.format(Locale.US, "%010d 00000 n \n", off));
+        }
+
+        writeAsciiPdf(pdf, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xrefOffset + "\n%%EOF");
+
+        return pdf.toByteArray();
+    }
+
     private static Bitmap scaleDown(Bitmap original) {
         if (original.getWidth() <= MAX_WIDTH_PX) return original;
         float ratio = (float) MAX_WIDTH_PX / original.getWidth();
@@ -101,67 +167,12 @@ public class PrinterHelper {
         return baos.toByteArray();
     }
 
-    // Constrói um PDF de uma página válido, com o JPEG embutido diretamente (sem reconverter
-    // a imagem — o PDF só "aponta" para os bytes do JPEG através do filtro DCTDecode).
-    private static byte[] buildJpegPdf(byte[] jpegBytes, int widthPx, int heightPx) {
-        ByteArrayOutputStream pdf = new ByteArrayOutputStream();
-        java.util.List<Integer> offsets = new java.util.ArrayList<>();
-
-        float pageWidthPt = widthPx * 72f / PDF_DPI;
-        float pageHeightPt = heightPx * 72f / PDF_DPI;
-
-        writeAsciiPdf(pdf, "%PDF-1.4\n");
-
-        // Objeto 1: catálogo
-        offsets.add(pdf.size());
-        writeAsciiPdf(pdf, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
-
-        // Objeto 2: páginas
-        offsets.add(pdf.size());
-        writeAsciiPdf(pdf, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
-
-        // Objeto 3: página, do tamanho exato da foto
-        offsets.add(pdf.size());
-        writeAsciiPdf(pdf, "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "
-                + pageWidthPt + " " + pageHeightPt
-                + "] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n");
-
-        // Objeto 4: a imagem em si (o JPEG original, sem alterações)
-        offsets.add(pdf.size());
-        writeAsciiPdf(pdf, "4 0 obj\n<< /Type /XObject /Subtype /Image /Width " + widthPx
-                + " /Height " + heightPx
-                + " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "
-                + jpegBytes.length + " >>\nstream\n");
-        pdf.write(jpegBytes, 0, jpegBytes.length);
-        writeAsciiPdf(pdf, "\nendstream\nendobj\n");
-
-        // Objeto 5: conteúdo da página — desenha a imagem a ocupar a página toda
-        offsets.add(pdf.size());
-        String content = "q\n" + pageWidthPt + " 0 0 " + pageHeightPt + " 0 0 cm\n/Im0 Do\nQ";
-        byte[] contentBytes = content.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-        writeAsciiPdf(pdf, "5 0 obj\n<< /Length " + contentBytes.length + " >>\nstream\n");
-        pdf.write(contentBytes, 0, contentBytes.length);
-        writeAsciiPdf(pdf, "\nendstream\nendobj\n");
-
-        // Tabela de referências cruzadas (obrigatória para o PDF ser válido)
-        int xrefOffset = pdf.size();
-        writeAsciiPdf(pdf, "xref\n0 6\n0000000000 65535 f \n");
-        for (int off : offsets) {
-            writeAsciiPdf(pdf, String.format(Locale.US, "%010d 00000 n \n", off));
-        }
-
-        writeAsciiPdf(pdf, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xrefOffset + "\n%%EOF");
-
-        return pdf.toByteArray();
-    }
-
     private static void writeAsciiPdf(ByteArrayOutputStream buffer, String text) {
         byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
         buffer.write(bytes, 0, bytes.length);
     }
 
     // ================= PEDIDO IPP =================
-
     // Devolve null se o pedido foi bem-sucedido, ou uma descrição do problema caso contrário
     private static String sendIppPrintJob(String ip, int port, String path, String documentFormat, byte[] documentBytes) throws IOException {
         byte[] ippHeader = buildIppPrintJobHeader(ip, port, path, documentFormat);
@@ -230,8 +241,6 @@ public class PrinterHelper {
 
     // ================= CONSTRUÇÃO DO CABEÇALHO IPP (Print-Job) =================
 
-    // ================= CONSTRUÇÃO DO CABEÇALHO IPP (Print-Job) =================
-
     private static byte[] buildIppPrintJobHeader(String ip, int port, String path, String documentFormat) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
@@ -253,21 +262,25 @@ public class PrinterHelper {
         buffer.write(0x01); // operation-attributes-tag
 
         // 5. Atributos Obrigatórios (Strict IPP Specification Order)
-        // charset e natural-language TÊM DE SER os dois primeiros
-        writeAttribute(buffer, 0x47, "attributes-charset", "utf-8");                  // charset (0x47)
-        writeAttribute(buffer, 0x48, "attributes-natural-language", "en-us");         // naturalLanguage (0x48)
+        // charset e natural-language TÊM DE SER os dois primeiros charset (0x47)
+        writeAttribute(buffer, 0x47, "attributes-charset", "utf-8");
+        // naturalLanguage (0x48)
+        writeAttribute(buffer, 0x48, "attributes-natural-language", "en-us");
 
         // printer-uri precisa do esquema http:// ou ipp:// exato
         String uri = "ipp://" + ip + ":" + port + path;
-        writeAttribute(buffer, 0x45, "printer-uri", uri);                             // uri (0x45)
+        // uri (0x45)
+        writeAttribute(buffer, 0x45, "printer-uri", uri);
 
-        writeAttribute(buffer, 0x42, "requesting-user-name", "AutoPrint");            // nameWithoutLanguage (0x42)
-        writeAttribute(buffer, 0x42, "job-name", "AutoPrint Photo");                  // nameWithoutLanguage (0x42)
+        // nameWithoutLanguage (0x42)
+        writeAttribute(buffer, 0x42, "requesting-user-name", "AutoPrint");
+        writeAttribute(buffer, 0x42, "job-name", "AutoPrint Photo");
 
         // ipp-attribute-fidelity é OBRIGATÓRIO para a HP não dar 0x0400 (boolean tag 0x22)
         writeBooleanAttribute(buffer, "ipp-attribute-fidelity", false);
 
-        writeAttribute(buffer, 0x49, "document-format", documentFormat);              // mimeMediaType (0x49)
+        // mimeMediaType (0x49)
+        writeAttribute(buffer, 0x49, "document-format", documentFormat);
 
         // 6. Fim do grupo de atributos
         buffer.write(0x03); // end-of-attributes-tag
