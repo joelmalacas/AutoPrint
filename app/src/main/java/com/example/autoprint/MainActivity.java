@@ -61,7 +61,6 @@ public class MainActivity extends AppCompatActivity {
     private int flashMode = ImageCapture.FLASH_MODE_OFF;
 
     private static final int MAX_PHOTOS = 10;
-    // CORREÇÃO 1: Removida a barra final para bater certo com a gravação no MediaStore
     private static final String PHOTOS_RELATIVE_PATH = "Pictures/AutoPrint";
 
     private final ActivityResultLauncher<String> requestPermissionLauncher =
@@ -109,7 +108,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ================= CÂMARA =================
-
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
                 ProcessCameraProvider.getInstance(this);
@@ -150,7 +148,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ================= CAPTURA DE FOTO =================
-
     private void takePhoto() {
         if (imageCapture == null) return;
 
@@ -206,50 +203,68 @@ public class MainActivity extends AppCompatActivity {
     private void printPhoto(Uri photoUri) {
         SharedPreferences prefs = getSharedPreferences(DefActivity.PREFS_NAME, MODE_PRIVATE);
         String ip = prefs.getString(DefActivity.KEY_PRINTER_IP, "");
-        int port = prefs.getInt(DefActivity.KEY_PRINTER_PORT, 631); // CORREÇÃO: Porta padrão IPP 631
+        int port = prefs.getInt(DefActivity.KEY_PRINTER_PORT, 631);
 
         if (TextUtils.isEmpty(ip)) {
             txtStatus.setText("Impressora não configurada");
             return;
         }
 
-        txtStatus.setText("A imprimir...");
+        txtStatus.setText("A gerar jornal e imprimir...");
 
         new Thread(() -> {
-            Bitmap bitmap = loadBitmapFromUri(photoUri);
-            if (bitmap == null) {
-                runOnUiThread(() -> txtStatus.setText("Erro ao carregar foto"));
-                return;
+            try {
+                // 1. Carrega o Bitmap original da câmara
+                Bitmap rawPhotoBitmap = loadBitmapFromUri(photoUri);
+                if (rawPhotoBitmap == null) {
+                    runOnUiThread(() -> txtStatus.setText("Erro ao carregar foto"));
+                    return;
+                }
+
+                // 2. Processa o Template na Thread em segundo plano com proteção
+                Bitmap journalBitmap = TemplateComposer.processJournalTemplate(
+                        MainActivity.this,
+                        rawPhotoBitmap,
+                        R.drawable.retro_paparazzi_template
+                );
+
+                if (journalBitmap == null) {
+                    runOnUiThread(() -> txtStatus.setText("Erro ao processar template"));
+                    return;
+                }
+
+                // 3. Envia para a impressora
+                PrinterHelper.printImage(ip, port, journalBitmap, new PrinterHelper.PrintCallback() {
+                    @Override
+                    public void onSuccess() {
+                        runOnUiThread(() -> txtStatus.setText("Impressão enviada"));
+                    }
+
+                    @Override
+                    public void onError(String message) {
+                        Log.e("AutoPrintDebug", message);
+                        runOnUiThread(() -> txtStatus.setText("Falha ao imprimir"));
+                    }
+                });
+
+            } catch (Throwable e) {
+                // Captura tanto Exception como OutOfMemoryError sem crashar a app
+                Log.e("AutoPrintCrash", "Erro ao processar/imprimir jornal: ", e);
+                runOnUiThread(() -> {
+                    txtStatus.setText("Erro no processamento do jornal");
+                    Toast.makeText(MainActivity.this, "Erro: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+                });
             }
-
-            PrinterHelper.printImage(ip, port, bitmap, new PrinterHelper.PrintCallback() {
-                @Override
-                public void onSuccess() {
-                    runOnUiThread(() -> {
-                        txtStatus.setText("Impressão enviada");
-                        Toast.makeText(MainActivity.this, "Foto enviada para a HP LaserJet", Toast.LENGTH_SHORT).show();
-                    });
-                }
-
-                @Override
-                public void onError(String message) {
-                    Log.e("AutoPrintDebug", message);
-                    runOnUiThread(() -> {
-                        txtStatus.setText("Falha ao imprimir (ver Logcat)");
-                        Toast.makeText(MainActivity.this, "Erro: " + message, Toast.LENGTH_LONG).show();
-                    });
-                }
-            });
         }).start();
     }
 
-    // CORREÇÃO 2: Carregamento seguro da imagem compatível com todas as versões Android
     private Bitmap loadBitmapFromUri(Uri uri) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 ImageDecoder.Source source = ImageDecoder.createSource(getContentResolver(), uri);
                 return ImageDecoder.decodeBitmap(source, (decoder, info, src) -> {
                     decoder.setTargetSampleSize(2); // Reduz consumo de RAM
+                    decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
                 });
             } else {
                 try (InputStream inputStream = getContentResolver().openInputStream(uri)) {
@@ -265,10 +280,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ================= LIMITE DE FOTOGRAFIAS GUARDADAS =================
-
     private void enforcePhotoLimit() {
         new Thread(() -> {
-            // Em versões anteriores ao Android 10 (API 29), a coluna RELATIVE_PATH não existe no MediaStore
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return;
 
             Uri collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
@@ -321,7 +334,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ================= FLASH =================
-
     private void toggleFlash() {
         if (flashMode == ImageCapture.FLASH_MODE_OFF) {
             flashMode = ImageCapture.FLASH_MODE_ON;
@@ -335,11 +347,23 @@ public class MainActivity extends AppCompatActivity {
             imageCapture.setFlashMode(flashMode);
         }
 
-        btnFlash.setImageResource(R.drawable.ic_flash_off);
+        switch (flashMode) {
+            case ImageCapture.FLASH_MODE_ON:
+                btnFlash.setImageResource(R.drawable.ic_flash_on);
+                break;
+
+            case ImageCapture.FLASH_MODE_AUTO:
+                btnFlash.setImageResource(R.drawable.ic_flash_auto);
+                break;
+
+            case ImageCapture.FLASH_MODE_OFF:
+            default:
+                btnFlash.setImageResource(R.drawable.ic_flash_off);
+                break;
+        }
     }
 
     // ================= TROCAR CÂMARA =================
-
     private void switchCamera() {
         if (lensFacing == CameraSelector.LENS_FACING_BACK) {
             lensFacing = CameraSelector.LENS_FACING_FRONT;

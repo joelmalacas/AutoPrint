@@ -77,7 +77,6 @@ public class DefActivity extends AppCompatActivity {
     private void loadSettings() {
         editIp.setText(prefs.getString(KEY_PRINTER_IP, "192.168.1.109"));
 
-        // CORREÇÃO: Padrão alterado para 631 (IPP)
         int savedPort = prefs.getInt(KEY_PRINTER_PORT, 631);
         editPort.setText(String.valueOf(savedPort));
 
@@ -176,7 +175,6 @@ public class DefActivity extends AppCompatActivity {
         }).start();
     }
 
-    // CORREÇÃO: Método universal para obter o IP do Wi-Fi sem falhar no Android 10+
     private String getDeviceIpAddress() {
         try {
             List<NetworkInterface> interfaces = Collections.list(NetworkInterface.getNetworkInterfaces());
