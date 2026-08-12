@@ -9,6 +9,7 @@ import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ImageDecoder;
+import android.media.MediaActionSound;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -68,6 +69,9 @@ public class MainActivity extends AppCompatActivity {
     private static final int MAX_PHOTOS = 10;
     private static final String PHOTOS_RELATIVE_PATH = "Pictures/AutoPrint";
 
+    // Som do "click" do obturador — carregado antecipadamente para não ter atraso na primeira foto
+    private MediaActionSound shutterSound;
+
     private final ActivityResultLauncher<String> requestPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
                 if (granted) {
@@ -105,6 +109,17 @@ public class MainActivity extends AppCompatActivity {
         ImageButton btnSettings = findViewById(R.id.btnSettings);
         btnSettings.setOnClickListener(v ->
                 startActivity(new android.content.Intent(MainActivity.this, DefActivity.class)));
+
+        shutterSound = new MediaActionSound();
+        shutterSound.load(MediaActionSound.SHUTTER_CLICK);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (shutterSound != null) {
+            shutterSound.release();
+        }
     }
 
     private boolean hasCameraPermission() {
@@ -156,6 +171,10 @@ public class MainActivity extends AppCompatActivity {
     private void takePhoto() {
         if (imageCapture == null) return;
 
+        if (isShutterSoundEnabled()) {
+            shutterSound.play(MediaActionSound.SHUTTER_CLICK);
+        }
+
         String name = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US)
                 .format(System.currentTimeMillis());
 
@@ -164,6 +183,12 @@ public class MainActivity extends AppCompatActivity {
         } else {
             takePhotoToPrivateStorage(name);
         }
+    }
+
+    // Lê a preferência definida em Definições > "Som do obturador"
+    private boolean isShutterSoundEnabled() {
+        SharedPreferences prefs = getSharedPreferences(DefActivity.PREFS_NAME, MODE_PRIVATE);
+        return prefs.getBoolean(DefActivity.KEY_SHUTTER_SOUND, true);
     }
 
     // Lê a preferência definida em Definições > "Guardar na galeria"

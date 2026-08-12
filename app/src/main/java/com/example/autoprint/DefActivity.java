@@ -13,16 +13,14 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.NetworkInterface;
 import java.net.Socket;
-import java.util.Collections;
-import java.util.List;
+import java.util.Locale;
 import java.util.regex.Pattern;
 
 public class DefActivity extends AppCompatActivity {
 
+    // Nome do ficheiro de preferências e chaves usadas para guardar cada valor
     public static final String PREFS_NAME = "autoprint_prefs";
     public static final String KEY_PRINTER_IP = "printer_ip";
     public static final String KEY_PRINTER_PORT = "printer_port";
@@ -71,14 +69,50 @@ public class DefActivity extends AppCompatActivity {
         btnBack.setOnClickListener(v -> finish());
         btnTestConnection.setOnClickListener(v -> testConnection());
         btnSave.setOnClickListener(v -> saveSettings());
+
         setupSaveGalleryToggle();
+        setupShutterSoundToggle();
+    }
+
+    // Reage imediatamente ao alternar o switch "Som do obturador": persiste logo a
+    // alteração e toca o som na hora, para o utilizador ouvir o que está a ativar/desativar.
+    private void setupShutterSoundToggle() {
+        android.media.MediaActionSound previewSound = new android.media.MediaActionSound();
+        previewSound.load(android.media.MediaActionSound.SHUTTER_CLICK);
+
+        switchShutterSound.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            prefs.edit().putBoolean(KEY_SHUTTER_SOUND, isChecked).apply();
+
+            if (isChecked) {
+                previewSound.play(android.media.MediaActionSound.SHUTTER_CLICK);
+            }
+        });
+    }
+
+    // Reage imediatamente ao alternar o switch "Guardar na galeria": não é preciso
+    // carregar em "Guardar definições" para isto ter efeito na próxima fotografia.
+    private void setupSaveGalleryToggle() {
+        switchSaveGallery.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            prefs.edit().putBoolean(KEY_SAVE_GALLERY, isChecked).apply();
+
+            if (isChecked) {
+                Toast.makeText(this,
+                        "As fotos vão passar a aparecer na Galeria do telemóvel",
+                        Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this,
+                        "As fotos deixam de aparecer na Galeria — ficam guardadas só dentro da app",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     // ================= CARREGAR / GUARDAR =================
-    private void loadSettings() {
-        editIp.setText(prefs.getString(KEY_PRINTER_IP, "192.168.1.109"));
 
-        int savedPort = prefs.getInt(KEY_PRINTER_PORT, 631);
+    private void loadSettings() {
+        editIp.setText(prefs.getString(KEY_PRINTER_IP, ""));
+
+        int savedPort = prefs.getInt(KEY_PRINTER_PORT, 631); // 631 é a porta standard do protocolo IPP
         editPort.setText(String.valueOf(savedPort));
 
         switchSaveGallery.setChecked(prefs.getBoolean(KEY_SAVE_GALLERY, true));
@@ -120,23 +154,6 @@ public class DefActivity extends AppCompatActivity {
         finish();
     }
 
-    //================== SWITCH GALERIA =================
-    private void setupSaveGalleryToggle() {
-        switchSaveGallery.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            prefs.edit().putBoolean(KEY_SAVE_GALLERY, isChecked).apply();
-
-            if (isChecked) {
-                Toast.makeText(this,
-                        "As fotos vão passar a aparecer na Galeria do telemóvel",
-                        Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(this,
-                        "As fotos deixam de aparecer na Galeria — ficam guardadas só dentro da app",
-                        Toast.LENGTH_LONG).show();
-            }
-        });
-    }
-
     // ================= TESTAR LIGAÇÃO =================
 
     private void testConnection() {
@@ -158,10 +175,11 @@ public class DefActivity extends AppCompatActivity {
             return;
         }
 
-        txtConnectionStatus.setText("A testar ligação à impressora...");
+        txtConnectionStatus.setText("A testar ligação...");
         txtConnectionStatus.setTextColor(0xFF8A8A8E);
 
         final int finalPort = port;
+        // Ligação de rede tem de correr fora da thread principal
         new Thread(() -> {
             String errorDetail = null;
             boolean reachable = false;
@@ -170,11 +188,11 @@ public class DefActivity extends AppCompatActivity {
                 socket.connect(new InetSocketAddress(ip, finalPort), 5000);
                 reachable = true;
             } catch (java.net.SocketTimeoutException e) {
-                errorDetail = "Tempo esgotado — confirma se o telemóvel e a Impressora/Surface estão no mesmo Wi-Fi";
+                errorDetail = "Sem resposta (tempo esgotado) — o telemóvel provavelmente não está na mesma rede, ou há uma firewall/router a bloquear";
             } catch (java.net.ConnectException e) {
-                errorDetail = "Ligação recusada na porta " + finalPort + " (tenta a porta 631 ou 9100)";
+                errorDetail = "Ligação recusada pelo dispositivo (" + e.getMessage() + ")";
             } catch (java.net.UnknownHostException e) {
-                errorDetail = "IP " + ip + " não encontrado na rede";
+                errorDetail = "IP não encontrado na rede";
             } catch (IOException e) {
                 errorDetail = e.getClass().getSimpleName() + ": " + e.getMessage();
             }
@@ -183,7 +201,7 @@ public class DefActivity extends AppCompatActivity {
             String finalErrorDetail = errorDetail;
             runOnUiThread(() -> {
                 if (finalReachable) {
-                    txtConnectionStatus.setText("Ligação com a impressora bem-sucedida (Porta " + finalPort + ")");
+                    txtConnectionStatus.setText("Ligação estabelecida com sucesso");
                     txtConnectionStatus.setTextColor(0xFF2E7D32);
                 } else {
                     txtConnectionStatus.setText("Falha: " + finalErrorDetail);
@@ -195,21 +213,16 @@ public class DefActivity extends AppCompatActivity {
 
     private String getDeviceIpAddress() {
         try {
-            List<NetworkInterface> interfaces = Collections.list(NetworkInterface.getNetworkInterfaces());
-            for (NetworkInterface intf : interfaces) {
-                if (!intf.getName().contains("wlan")) continue;
-                List<InetAddress> addrs = Collections.list(intf.getInetAddresses());
-                for (InetAddress addr : addrs) {
-                    if (!addr.isLoopbackAddress()) {
-                        String sAddr = addr.getHostAddress();
-                        if (sAddr != null && IP_PATTERN.matcher(sAddr).matches()) {
-                            return sAddr;
-                        }
-                    }
-                }
-            }
-        } catch (Exception ignored) { }
-        return "Desconhecido / Wi-Fi desligado";
+            android.net.wifi.WifiManager wifiManager =
+                    (android.net.wifi.WifiManager) getApplicationContext()
+                            .getSystemService(android.content.Context.WIFI_SERVICE);
+            int ipInt = wifiManager.getConnectionInfo().getIpAddress();
+            if (ipInt == 0) return "Wi-Fi desligado ou sem ligação";
+            return String.format(Locale.US, "%d.%d.%d.%d",
+                    (ipInt & 0xff), (ipInt >> 8 & 0xff), (ipInt >> 16 & 0xff), (ipInt >> 24 & 0xff));
+        } catch (Exception e) {
+            return "Desconhecido";
+        }
     }
 
     private String getAppVersionName() {
