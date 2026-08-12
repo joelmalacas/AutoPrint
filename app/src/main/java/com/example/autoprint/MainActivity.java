@@ -12,6 +12,7 @@ import android.graphics.ImageDecoder;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.MediaStore;
 import android.text.TextUtils;
 import android.util.Log;
@@ -32,13 +33,17 @@ import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import java.io.File;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutionException;
@@ -154,6 +159,21 @@ public class MainActivity extends AppCompatActivity {
         String name = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US)
                 .format(System.currentTimeMillis());
 
+        if (isSaveToGalleryEnabled()) {
+            takePhotoToGallery(name);
+        } else {
+            takePhotoToPrivateStorage(name);
+        }
+    }
+
+    // Lê a preferência definida em Definições > "Guardar na galeria"
+    private boolean isSaveToGalleryEnabled() {
+        SharedPreferences prefs = getSharedPreferences(DefActivity.PREFS_NAME, MODE_PRIVATE);
+        return prefs.getBoolean(DefActivity.KEY_SAVE_GALLERY, true);
+    }
+
+    // Guarda a foto na Galeria pública do telemóvel (Pictures/AutoPrint), visível na app Fotos
+    private void takePhotoToGallery(String name) {
         ContentValues contentValues = new ContentValues();
         contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, "IMG_" + name);
         contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
@@ -173,19 +193,7 @@ public class MainActivity extends AppCompatActivity {
                 new ImageCapture.OnImageSavedCallback() {
                     @Override
                     public void onImageSaved(@NonNull ImageCapture.OutputFileResults output) {
-                        playCaptureFlashAnimation();
-                        Uri savedUri = output.getSavedUri();
-                        if (savedUri != null) {
-                            imgThumbnail.setImageURI(savedUri);
-                        }
-                        Toast.makeText(MainActivity.this,
-                                "Fotografia guardada", Toast.LENGTH_SHORT).show();
-
-                        enforcePhotoLimit();
-
-                        if (savedUri != null) {
-                            printPhoto(savedUri);
-                        }
+                        onPhotoCaptured(output.getSavedUri(), /* savedToGallery = */ true);
                     }
 
                     @Override
@@ -196,6 +204,64 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
         );
+    }
+
+    // Guarda a foto só dentro da pasta privada da app — não aparece na Galeria/Fotos do
+    // telemóvel, mas continua acessível para a miniatura e para a impressão via FileProvider
+    private void takePhotoToPrivateStorage(String name) {
+        File dir = new File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AutoPrint");
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        File photoFile = new File(dir, "IMG_" + name + ".jpg");
+
+        ImageCapture.OutputFileOptions outputOptions =
+                new ImageCapture.OutputFileOptions.Builder(photoFile).build();
+
+        imageCapture.takePicture(
+                outputOptions,
+                ContextCompat.getMainExecutor(this),
+                new ImageCapture.OnImageSavedCallback() {
+                    @Override
+                    public void onImageSaved(@NonNull ImageCapture.OutputFileResults output) {
+                        Uri contentUri = FileProvider.getUriForFile(
+                                MainActivity.this,
+                                getPackageName() + ".fileprovider",
+                                photoFile);
+                        onPhotoCaptured(contentUri, /* savedToGallery = */ false);
+                    }
+
+                    @Override
+                    public void onError(@NonNull ImageCaptureException exception) {
+                        Toast.makeText(MainActivity.this,
+                                "Falha ao guardar a fotografia: " + exception.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                }
+        );
+    }
+
+    // Fluxo comum depois de qualquer foto ser guardada, seja na galeria ou em privado
+    private void onPhotoCaptured(Uri savedUri, boolean savedToGallery) {
+        playCaptureFlashAnimation();
+
+        if (savedUri != null) {
+            imgThumbnail.setImageURI(savedUri);
+        }
+
+        Toast.makeText(this,
+                savedToGallery ? "Fotografia guardada na galeria" : "Fotografia guardada na app",
+                Toast.LENGTH_SHORT).show();
+
+        if (savedToGallery) {
+            enforcePhotoLimitGallery();
+        } else {
+            enforcePhotoLimitPrivateStorage();
+        }
+
+        if (savedUri != null) {
+            printPhoto(savedUri);
+        }
     }
 
     // ================= IMPRESSÃO AUTOMÁTICA =================
@@ -279,7 +345,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ================= LIMITE DE FOTOGRAFIAS GUARDADAS =================
-    private void enforcePhotoLimit() {
+
+    // Versão para quando as fotos vão para a Galeria pública (MediaStore)
+    private void enforcePhotoLimitGallery() {
         new Thread(() -> {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return;
 
@@ -318,6 +386,24 @@ public class MainActivity extends AppCompatActivity {
                 } catch (SecurityException se) {
                     Log.w("AutoPrint", "Sem permissão para eliminar foto antiga: " + se.getMessage());
                 }
+            }
+        }).start();
+    }
+
+    // Versão para quando as fotos ficam guardadas apenas na pasta privada da app
+    // (fora do MediaStore, por isso lê e apaga diretamente os ficheiros do disco)
+    private void enforcePhotoLimitPrivateStorage() {
+        new Thread(() -> {
+            File dir = new File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AutoPrint");
+            File[] files = dir.listFiles();
+            if (files == null || files.length <= MAX_PHOTOS) return;
+
+            List<File> sorted = new ArrayList<>(Arrays.asList(files));
+            sorted.sort(Comparator.comparingLong(File::lastModified)); // mais antigos primeiro
+
+            int excess = sorted.size() - MAX_PHOTOS;
+            for (int i = 0; i < excess; i++) {
+                sorted.get(i).delete();
             }
         }).start();
     }

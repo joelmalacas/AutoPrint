@@ -71,6 +71,7 @@ public class DefActivity extends AppCompatActivity {
         btnBack.setOnClickListener(v -> finish());
         btnTestConnection.setOnClickListener(v -> testConnection());
         btnSave.setOnClickListener(v -> saveSettings());
+        setupSaveGalleryToggle();
     }
 
     // ================= CARREGAR / GUARDAR =================
@@ -117,6 +118,23 @@ public class DefActivity extends AppCompatActivity {
 
         Toast.makeText(this, "Definições guardadas", Toast.LENGTH_SHORT).show();
         finish();
+    }
+
+    //================== SWITCH GALERIA =================
+    private void setupSaveGalleryToggle() {
+        switchSaveGallery.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            prefs.edit().putBoolean(KEY_SAVE_GALLERY, isChecked).apply();
+
+            if (isChecked) {
+                Toast.makeText(this,
+                        "As fotos vão passar a aparecer na Galeria do telemóvel",
+                        Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this,
+                        "As fotos deixam de aparecer na Galeria — ficam guardadas só dentro da app",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     // ================= TESTAR LIGAÇÃO =================
