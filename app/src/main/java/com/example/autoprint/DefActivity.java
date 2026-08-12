@@ -72,6 +72,13 @@ public class DefActivity extends AppCompatActivity {
 
         setupSaveGalleryToggle();
         setupShutterSoundToggle();
+        setupGridToggle();
+    }
+
+    // Persiste imediatamente a alteração ao switch "Mostrar grelha"
+    private void setupGridToggle() {
+        switchGrid.setOnCheckedChangeListener((buttonView, isChecked) ->
+                prefs.edit().putBoolean(KEY_SHOW_GRID, isChecked).apply());
     }
 
     // Reage imediatamente ao alternar o switch "Som do obturador": persiste logo a
@@ -211,6 +218,7 @@ public class DefActivity extends AppCompatActivity {
         }).start();
     }
 
+    // Mostra o IP local do telemóvel, para confirmares que está na mesma rede (192.168.1.x) da impressora
     private String getDeviceIpAddress() {
         try {
             android.net.wifi.WifiManager wifiManager =

@@ -1,5 +1,7 @@
 package com.example.autoprint;
 
+import static com.example.autoprint.R.id.gridOverlay;
+
 import android.Manifest;
 import android.content.ContentUris;
 import android.content.ContentValues;
@@ -58,6 +60,7 @@ public class MainActivity extends AppCompatActivity {
     private ImageView imgThumbnail;
     private TextView txtStatus;
     private android.view.View captureFlashOverlay;
+    private GridOverlayView gridOverlay;
 
     private ImageCapture imageCapture;
     private ProcessCameraProvider cameraProvider;
@@ -95,6 +98,7 @@ public class MainActivity extends AppCompatActivity {
         imgThumbnail = findViewById(R.id.imgThumbnail);
         txtStatus = findViewById(R.id.txtStatus);
         captureFlashOverlay = findViewById(R.id.captureFlashOverlay);
+        gridOverlay = findViewById(R.id.gridOverlay);
 
         if (hasCameraPermission()) {
             startCamera();
@@ -115,11 +119,24 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        // Atualiza a grelha ao voltar das Definições, caso o utilizador a tenha alternado lá
+        updateGridVisibility();
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         if (shutterSound != null) {
             shutterSound.release();
         }
+    }
+
+    private void updateGridVisibility() {
+        SharedPreferences prefs = getSharedPreferences(DefActivity.PREFS_NAME, MODE_PRIVATE);
+        boolean showGrid = prefs.getBoolean(DefActivity.KEY_SHOW_GRID, false);
+        gridOverlay.setVisibility(showGrid ? android.view.View.VISIBLE : android.view.View.GONE);
     }
 
     private boolean hasCameraPermission() {
@@ -168,6 +185,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ================= CAPTURA DE FOTO =================
+
     private void takePhoto() {
         if (imageCapture == null) return;
 

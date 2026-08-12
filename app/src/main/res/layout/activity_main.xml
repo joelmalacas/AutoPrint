@@ -20,6 +20,18 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- ================= GRELHA DE COMPOSIÇÃO (regra dos terços) ================= -->
+    <!-- Escondida por defeito; a MainActivity mostra-a consoante a definição "Mostrar grelha" -->
+    <com.example.autoprint.GridOverlayView
+        android:id="@+id/gridOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="@id/viewFinder"
+        app:layout_constraintBottom_toBottomOf="@id/viewFinder"
+        app:layout_constraintStart_toStartOf="@id/viewFinder"
+        app:layout_constraintEnd_toEndOf="@id/viewFinder" />
+
     <!-- ================= GRADIENTE SUPERIOR (contraste dos ícones) ================= -->
     <View
         android:layout_width="0dp"
@@ -162,8 +174,6 @@
             android:src="@null"
             android:contentDescription="Tirar fotografia"
             android:stateListAnimator="@animator/capture_button_press"
-            app:backgroundTint="@null"
-            android:backgroundTint="@null"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
@@ -176,8 +186,7 @@
             android:layout_height="52dp"
             app:fabCustomSize="52dp"
             app:maxImageSize="26dp"
-            app:backgroundTint="@null"
-            android:backgroundTint="@null"
+            app:backgroundTint="#33FFFFFF"
             app:tint="#FFFFFF"
             app:elevation="0dp"
             app:borderWidth="0dp"
