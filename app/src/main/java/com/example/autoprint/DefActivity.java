@@ -27,6 +27,7 @@ public class DefActivity extends AppCompatActivity {
     public static final String KEY_SAVE_GALLERY = "save_gallery";
     public static final String KEY_SHUTTER_SOUND = "shutter_sound";
     public static final String KEY_SHOW_GRID = "show_grid";
+    public static final String KEY_SELECTED_TEMPLATE = "selected_template_path";
 
     private static final Pattern IP_PATTERN = Pattern.compile(
             "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
@@ -54,6 +55,7 @@ public class DefActivity extends AppCompatActivity {
         txtConnectionStatus = findViewById(R.id.txtConnectionStatus);
         Button btnTestConnection = findViewById(R.id.btnTestConnection);
         Button btnSave = findViewById(R.id.btnSave);
+        Button btnManageTemplates = findViewById(R.id.btnManageTemplates);
         switchSaveGallery = findViewById(R.id.switchSaveGallery);
         switchShutterSound = findViewById(R.id.switchShutterSound);
         switchGrid = findViewById(R.id.switchGrid);
@@ -69,6 +71,8 @@ public class DefActivity extends AppCompatActivity {
         btnBack.setOnClickListener(v -> finish());
         btnTestConnection.setOnClickListener(v -> testConnection());
         btnSave.setOnClickListener(v -> saveSettings());
+        btnManageTemplates.setOnClickListener(v ->
+                startActivity(new android.content.Intent(DefActivity.this, TemplateActivity.class)));
 
         setupSaveGalleryToggle();
         setupShutterSoundToggle();

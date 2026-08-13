@@ -330,11 +330,25 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 // 2. Processa o Template na Thread em segundo plano com proteção
-                Bitmap journalBitmap = TemplateComposer.processJournalTemplate(
-                        MainActivity.this,
-                        rawPhotoBitmap,
-                        R.drawable.retro_paparazzi_template_resize
-                );
+                String selectedTemplatePath = prefs.getString(DefActivity.KEY_SELECTED_TEMPLATE, "");
+                File templateFile = new File(selectedTemplatePath);
+
+                Bitmap journalBitmap;
+                if (!TextUtils.isEmpty(selectedTemplatePath) && templateFile.exists()) {
+                    // Passa o File do template selecionado pelo utilizador na TemplateActivity
+                    journalBitmap = TemplateComposer.processJournalTemplate(
+                            MainActivity.this,
+                            rawPhotoBitmap,
+                            templateFile
+                    );
+                } else {
+                    // Se não houver template selecionado, usa o ID do drawable original
+                    journalBitmap = TemplateComposer.processJournalTemplate(
+                            MainActivity.this,
+                            rawPhotoBitmap,
+                            R.drawable.retro_paparazzi_template_cabo_verde
+                    );
+                }
 
                 if (journalBitmap == null) {
                     runOnUiThread(() -> txtStatus.setText("Erro ao processar template"));
