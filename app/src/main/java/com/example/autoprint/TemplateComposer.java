@@ -7,30 +7,13 @@ import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.RectF;
 
-import java.io.File;
-
 public class TemplateComposer {
 
     // Resolução A4 Standard a 300 DPI
     private static final int A4_WIDTH = 2480;
     private static final int A4_HEIGHT = 3508;
 
-    // NOVO MÉTODO: Para carregar templates dinâmicos a partir de um File da TemplateActivity
-    public static Bitmap processJournalTemplate(Context context, Bitmap photoBitmap, File templateFile) {
-        if (templateFile != null && templateFile.exists()) {
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inScaled = false;
-            Bitmap rawTemplate = BitmapFactory.decodeFile(templateFile.getAbsolutePath(), options);
-
-            if (rawTemplate != null) {
-                return renderA4Canvas(rawTemplate, photoBitmap);
-            }
-        }
-        // Fallback seguro para o template por defeito
-        return processJournalTemplate(context, photoBitmap, R.drawable.retro_paparazzi_template_cabo_verde);
-    }
-
-    // MÉTODOS ORIGINAIS (Mantidos a 100%)
+    // Versão original: template vindo de um recurso R.drawable (ex: o template fixo da app)
     public static Bitmap processJournalTemplate(Context context, Bitmap photoBitmap, int templateResId) {
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inScaled = false;
@@ -40,13 +23,19 @@ public class TemplateComposer {
             return ensureSoftwareBitmap(photoBitmap);
         }
 
-        return renderA4Canvas(rawTemplate, photoBitmap);
+        return processJournalTemplate(photoBitmap, rawTemplate);
     }
 
-    // Isola a lógica do Canvas para partilhar entre o File e o Resource
-    private static Bitmap renderA4Canvas(Bitmap rawTemplate, Bitmap photoBitmap) {
+    // Versão nova: template vindo de um Bitmap já carregado (ex: um template escolhido
+    // pelo utilizador em Definições > Gerir templates, guardado na pasta privada da app)
+    public static Bitmap processJournalTemplate(Bitmap photoBitmap, Bitmap templateBitmap) {
         Bitmap safePhoto = ensureSoftwareBitmap(photoBitmap);
-        Bitmap safeTemplate = ensureSoftwareBitmap(rawTemplate);
+
+        if (templateBitmap == null) {
+            return safePhoto;
+        }
+
+        Bitmap safeTemplate = ensureSoftwareBitmap(templateBitmap);
 
         // 1. Cria a folha A4 em branco (2480 x 3508)
         Bitmap a4PageBitmap = Bitmap.createBitmap(A4_WIDTH, A4_HEIGHT, Bitmap.Config.ARGB_8888);

@@ -1,7 +1,5 @@
 package com.example.autoprint;
 
-import static com.example.autoprint.R.id.gridOverlay;
-
 import android.Manifest;
 import android.content.ContentUris;
 import android.content.ContentValues;
@@ -75,6 +73,9 @@ public class MainActivity extends AppCompatActivity {
     // Som do "click" do obturador — carregado antecipadamente para não ter atraso na primeira foto
     private MediaActionSound shutterSound;
 
+    // Histórico de impressões (timestamp, foto, template usado)
+    private PrintHistoryDbHelper printHistoryDb;
+
     private final ActivityResultLauncher<String> requestPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
                 if (granted) {
@@ -116,6 +117,8 @@ public class MainActivity extends AppCompatActivity {
 
         shutterSound = new MediaActionSound();
         shutterSound.load(MediaActionSound.SHUTTER_CLICK);
+
+        printHistoryDb = new PrintHistoryDbHelper(this);
     }
 
     @Override
@@ -308,6 +311,27 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ================= IMPRESSÃO AUTOMÁTICA =================
+
+    // Lê o caminho do template escolhido em Definições > Gerir templates (string vazia se nenhum)
+    private String getSelectedTemplatePath() {
+        SharedPreferences prefs = getSharedPreferences(DefActivity.PREFS_NAME, MODE_PRIVATE);
+        return prefs.getString(DefActivity.KEY_SELECTED_TEMPLATE, "");
+    }
+
+    // Carrega o Bitmap do template a partir do caminho guardado. Devolve null se ainda não
+    // houver nenhum escolhido (ou o ficheiro já não existir), caso em que o chamador deve
+    // usar o template fixo da app como reserva.
+    private Bitmap loadSelectedTemplateBitmap(String path) {
+        if (TextUtils.isEmpty(path)) return null;
+
+        File file = new File(path);
+        if (!file.exists()) return null;
+
+        android.graphics.BitmapFactory.Options options = new android.graphics.BitmapFactory.Options();
+        options.inScaled = false;
+        return android.graphics.BitmapFactory.decodeFile(path, options);
+    }
+
     private void printPhoto(Uri photoUri) {
         SharedPreferences prefs = getSharedPreferences(DefActivity.PREFS_NAME, MODE_PRIVATE);
         String ip = prefs.getString(DefActivity.KEY_PRINTER_IP, "");
@@ -329,26 +353,21 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-                // 2. Processa o Template na Thread em segundo plano com proteção
-                String selectedTemplatePath = prefs.getString(DefActivity.KEY_SELECTED_TEMPLATE, "");
-                File templateFile = new File(selectedTemplatePath);
+                // 2. Escolhe o template: o que foi selecionado em Definições > Gerir templates,
+                //    ou o template fixo da app caso ainda não tenha sido escolhido nenhum
+                String selectedTemplatePath = getSelectedTemplatePath();
+                Bitmap selectedTemplate = loadSelectedTemplateBitmap(selectedTemplatePath);
+                Bitmap journalBitmap = (selectedTemplate != null)
+                        ? TemplateComposer.processJournalTemplate(rawPhotoBitmap, selectedTemplate)
+                        : TemplateComposer.processJournalTemplate(
+                        MainActivity.this,
+                        rawPhotoBitmap,
+                        R.drawable.retro_paparazzi_template_cabo_verde
+                );
 
-                Bitmap journalBitmap;
-                if (!TextUtils.isEmpty(selectedTemplatePath) && templateFile.exists()) {
-                    // Passa o File do template selecionado pelo utilizador na TemplateActivity
-                    journalBitmap = TemplateComposer.processJournalTemplate(
-                            MainActivity.this,
-                            rawPhotoBitmap,
-                            templateFile
-                    );
-                } else {
-                    // Se não houver template selecionado, usa o ID do drawable original
-                    journalBitmap = TemplateComposer.processJournalTemplate(
-                            MainActivity.this,
-                            rawPhotoBitmap,
-                            R.drawable.retro_paparazzi_template_cabo_verde
-                    );
-                }
+                // Regista no histórico apenas quando a impressão for bem-sucedida
+                String templateLabel = (selectedTemplate != null) ? selectedTemplatePath : "template_fixo";
+                long captureTimestamp = System.currentTimeMillis();
 
                 if (journalBitmap == null) {
                     runOnUiThread(() -> txtStatus.setText("Erro ao processar template"));
@@ -360,6 +379,12 @@ public class MainActivity extends AppCompatActivity {
                     @Override
                     public void onSuccess() {
                         runOnUiThread(() -> txtStatus.setText("Impressão enviada"));
+
+                        // Só grava no histórico (local e remoto) depois de confirmar que imprimiu
+                        printHistoryDb.insertRecord(captureTimestamp, photoUri.toString(), templateLabel);
+                        new Thread(() ->
+                                MySqlHelper.insertPrintRecord(captureTimestamp, photoUri.toString(), templateLabel)
+                        ).start();
                     }
 
                     @Override

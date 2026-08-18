@@ -166,7 +166,6 @@ public class DefActivity extends AppCompatActivity {
     }
 
     // ================= TESTAR LIGAÇÃO =================
-
     private void testConnection() {
         String ip = editIp.getText().toString().trim();
         String portText = editPort.getText().toString().trim();
