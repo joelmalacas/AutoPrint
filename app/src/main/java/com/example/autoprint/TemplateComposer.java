@@ -46,11 +46,11 @@ public class TemplateComposer {
         Rect dstTemplateRect = new Rect(0, 0, A4_WIDTH, A4_HEIGHT);
         canvas.drawBitmap(safeTemplate, srcTemplateRect, dstTemplateRect, null);
 
-        // 3. Coordenadas exatas para a foto dentro da moldura da folha A4
-        float targetX = A4_WIDTH * 0.041f;       // ~101 px da esquerda
-        float targetY = A4_HEIGHT * 0.170f;      // ~596 px do topo
-        float targetWidth = A4_WIDTH * 0.575f;   // ~1426 px de largura
-        float targetHeight = A4_HEIGHT * 0.402f;  // ~1410 px de altura
+        // 3. Coordenadas recalibradas segundo o teste de impressão
+        float targetX = (A4_WIDTH * 0.058f) - 50f;       // ~94 px
+        float targetY = (A4_HEIGHT * 0.168f) + 55f;      // Recuado de +60f para +20f (sobe a foto ~40px)
+        float targetWidth = (A4_WIDTH * 0.528f) + 90f;   // ~1399 px
+        float targetHeight = (A4_HEIGHT * 0.408f) + 30f; // ~1461 px
 
         RectF dstPhotoRect = new RectF(targetX, targetY, targetX + targetWidth, targetY + targetHeight);
 
