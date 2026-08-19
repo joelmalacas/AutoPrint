@@ -28,6 +28,7 @@ public class DefActivity extends AppCompatActivity {
     public static final String KEY_SHUTTER_SOUND = "shutter_sound";
     public static final String KEY_SHOW_GRID = "show_grid";
     public static final String KEY_SELECTED_TEMPLATE = "selected_template_path";
+    public static final String KEY_PRINTER_NAME = "printer_name";
 
     private static final Pattern IP_PATTERN = Pattern.compile(
             "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
@@ -35,6 +36,7 @@ public class DefActivity extends AppCompatActivity {
 
     private EditText editIp;
     private EditText editPort;
+    private EditText editPrinterName;
     private TextView txtConnectionStatus;
     private SwitchCompat switchSaveGallery;
     private SwitchCompat switchShutterSound;
@@ -52,6 +54,7 @@ public class DefActivity extends AppCompatActivity {
         ImageButton btnBack = findViewById(R.id.btnBack);
         editIp = findViewById(R.id.editIp);
         editPort = findViewById(R.id.editPort);
+        editPrinterName = findViewById(R.id.editPrinterName);
         txtConnectionStatus = findViewById(R.id.txtConnectionStatus);
         Button btnTestConnection = findViewById(R.id.btnTestConnection);
         Button btnSave = findViewById(R.id.btnSave);
@@ -123,8 +126,10 @@ public class DefActivity extends AppCompatActivity {
     private void loadSettings() {
         editIp.setText(prefs.getString(KEY_PRINTER_IP, ""));
 
-        int savedPort = prefs.getInt(KEY_PRINTER_PORT, 631); // 631 é a porta standard do protocolo IPP
+        int savedPort = prefs.getInt(KEY_PRINTER_PORT, 8000); // 8000 é a porta por defeito da API de impressão
         editPort.setText(String.valueOf(savedPort));
+
+        editPrinterName.setText(prefs.getString(KEY_PRINTER_NAME, ""));
 
         switchSaveGallery.setChecked(prefs.getBoolean(KEY_SAVE_GALLERY, true));
         switchShutterSound.setChecked(prefs.getBoolean(KEY_SHUTTER_SOUND, true));
@@ -156,6 +161,7 @@ public class DefActivity extends AppCompatActivity {
         prefs.edit()
                 .putString(KEY_PRINTER_IP, ip)
                 .putInt(KEY_PRINTER_PORT, port)
+                .putString(KEY_PRINTER_NAME, editPrinterName.getText().toString().trim())
                 .putBoolean(KEY_SAVE_GALLERY, switchSaveGallery.isChecked())
                 .putBoolean(KEY_SHUTTER_SOUND, switchShutterSound.isChecked())
                 .putBoolean(KEY_SHOW_GRID, switchGrid.isChecked())
@@ -166,6 +172,7 @@ public class DefActivity extends AppCompatActivity {
     }
 
     // ================= TESTAR LIGAÇÃO =================
+
     private void testConnection() {
         String ip = editIp.getText().toString().trim();
         String portText = editPort.getText().toString().trim();

@@ -129,11 +129,35 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
                         android:background="@drawable/bg_input_field"
-                        android:hint="ex: 631 (IPP)"
+                        android:hint="ex: 8000 (API de impressão)"
                         android:textColorHint="#B0B0B5"
                         android:textColor="#1A1A1A"
                         android:textSize="15sp"
                         android:inputType="number"
+                        android:imeOptions="actionNext"
+                        android:maxLines="1"
+                        android:padding="14dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="18dp"
+                        android:text="Nome da impressora (opcional)"
+                        android:textColor="#1A1A1A"
+                        android:textSize="14sp"
+                        android:fontFamily="sans-serif-medium" />
+
+                    <EditText
+                        android:id="@+id/editPrinterName"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="@drawable/bg_input_field"
+                        android:hint="deixa vazio para usar a impressora predefinida"
+                        android:textColorHint="#B0B0B5"
+                        android:textColor="#1A1A1A"
+                        android:textSize="15sp"
+                        android:inputType="text"
                         android:imeOptions="actionDone"
                         android:maxLines="1"
                         android:padding="14dp" />
@@ -153,13 +177,13 @@
                         android:layout_height="46dp"
                         android:layout_marginTop="14dp"
                         android:background="@drawable/bg_button_secondary"
+                        android:elevation="0dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:stateListAnimator="@null"
                         android:text="Testar ligação"
                         android:textAllCaps="false"
-                        android:textColor="#FFFFFF"
-                        android:textSize="14sp"
-                        android:fontFamily="sans-serif-medium"
-                        android:elevation="0dp"
-                        android:stateListAnimator="@null" />
+                        android:textColor="#ffffff"
+                        android:textSize="14sp" />
 
                 </LinearLayout>
 
@@ -340,13 +364,13 @@
                         android:layout_height="46dp"
                         android:layout_marginTop="14dp"
                         android:background="@drawable/bg_button_secondary"
+                        android:elevation="0dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:stateListAnimator="@null"
                         android:text="Gerir templates"
                         android:textAllCaps="false"
-                        android:textColor="#FFFFFF"
-                        android:textSize="14sp"
-                        android:fontFamily="sans-serif-medium"
-                        android:elevation="0dp"
-                        android:stateListAnimator="@null" />
+                        android:textColor="#ffffff"
+                        android:textSize="14sp" />
 
                 </LinearLayout>
 

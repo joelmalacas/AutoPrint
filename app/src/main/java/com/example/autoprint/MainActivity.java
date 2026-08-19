@@ -335,7 +335,8 @@ public class MainActivity extends AppCompatActivity {
     private void printPhoto(Uri photoUri) {
         SharedPreferences prefs = getSharedPreferences(DefActivity.PREFS_NAME, MODE_PRIVATE);
         String ip = prefs.getString(DefActivity.KEY_PRINTER_IP, "");
-        int port = prefs.getInt(DefActivity.KEY_PRINTER_PORT, 631);
+        int port = prefs.getInt(DefActivity.KEY_PRINTER_PORT, 8000);
+        String printerName = prefs.getString(DefActivity.KEY_PRINTER_NAME, "");
 
         if (TextUtils.isEmpty(ip)) {
             txtStatus.setText("Impressora não configurada");
@@ -374,8 +375,8 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-                // 3. Envia para a impressora
-                PrinterHelper.printImage(ip, port, journalBitmap, new PrinterHelper.PrintCallback() {
+                // 3. Envia para a impressora, através da API de impressão Windows
+                PrinterHelper.printImage(ip, port, journalBitmap, printerName, new PrinterHelper.PrintCallback() {
                     @Override
                     public void onSuccess() {
                         runOnUiThread(() -> txtStatus.setText("Impressão enviada"));

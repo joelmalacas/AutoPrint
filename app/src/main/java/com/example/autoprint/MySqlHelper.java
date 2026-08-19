@@ -21,7 +21,7 @@ public class MySqlHelper {
     private static final int DB_PORT = 3306;
     private static final String DB_NAME = "AutoPrint";
     private static final String DB_USER = "AutoPrint";
-    private static final String DB_PASSWORD = "AutoPrint_2026!#";
+    private static final String DB_PASSWORD = "AutoPrint2026#!";
     // ==========================================
 
     private static final String JDBC_URL = "jdbc:mysql://" + DB_HOST + ":" + DB_PORT + "/" + DB_NAME
