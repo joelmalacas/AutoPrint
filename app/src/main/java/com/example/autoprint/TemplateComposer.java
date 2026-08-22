@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
+import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.RectF;
 
@@ -30,6 +31,10 @@ public class TemplateComposer {
     // pelo utilizador em Definições > Gerir templates, guardado na pasta privada da app)
     public static Bitmap processJournalTemplate(Bitmap photoBitmap, Bitmap templateBitmap) {
         Bitmap safePhoto = ensureSoftwareBitmap(photoBitmap);
+
+        // As fotos vêm sempre de lado (a câmara está deitada) — roda-se 90º para a
+        // esquerda para ficarem na orientação certa dentro do template
+        safePhoto = rotateBitmap(safePhoto, -90f);
 
         if (templateBitmap == null) {
             return safePhoto;
@@ -69,6 +74,13 @@ public class TemplateComposer {
             return bitmap.copy(Bitmap.Config.ARGB_8888, false);
         }
         return bitmap;
+    }
+
+    // Roda um bitmap o número de graus indicado (90 = sentido horário / para a direita)
+    private static Bitmap rotateBitmap(Bitmap source, float angleDegrees) {
+        Matrix matrix = new Matrix();
+        matrix.postRotate(angleDegrees);
+        return Bitmap.createBitmap(source, 0, 0, source.getWidth(), source.getHeight(), matrix, true);
     }
 
     private static Bitmap cropToAspectRatio(Bitmap src, float targetRatio) {
